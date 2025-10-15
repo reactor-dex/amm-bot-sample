@@ -3,10 +3,26 @@
 Create `.env` :
 ```
 AMM_PRIVATE_KEY=
-AMM_PROVIDER_URL=https://testnet.fuel.network/v1/graphql
-REACTOR_CONTRACT_ADDRESS=0xebb4551879ecd41eeb720f50ca05344843acc4e05128537deb41bc92e254717d
-AMM_POOLS_LIST_API=https://reactor-backend-75i7f.ondigitalocean.app/pools
+AMM_PROVIDER_URL=https://mainnet.fuel.network/v1/graphql
+REACTOR_CONTRACT_ADDRESS=0xbf42e11139c671af25030d291d9cf7fd1f8dbe01b6af69f5a8eda097544e3b7e
+AMM_POOLS_LIST_API=https://prod-reactor-backend-hoxwn.ondigitalocean.app/pools
+POLL_PERIOD_MS=1000
+
+# single swap limit (with all decimals) 
+# samples below are ~10usd
+USDC_MAX_SWAP=10000000
+ETH_MAX_SWAP=250000
+FUEL_MAX_SWAP=3100000000000
+ST_FUEL_MAX_SWAP=3000000000000
+
+# hardcode for FUEL/stFUEL price
+FUEL_ST_FUEL_PRICE=0.953918390
 ```
+Notes on configuration:
+- `*_MAX_SWAP` - max token amount used per single swap to arbitrage pool to market price;
+- `FUEL_ST_FUEL_PRICE` - hardcoded price, since discovery not yet implemented for FUEL/stFUEL pair
+- `POLL_PERIOD_MS` - delay in ms between two pools processing
+
 ## Run
 ```shell
 npx tsx ./src/ammBot.ts

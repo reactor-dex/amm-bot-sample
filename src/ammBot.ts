@@ -1,18 +1,23 @@
 import * as dotenv from 'dotenv';
-import { Account, BigNumberish, BN, Provider, Wallet } from 'fuels';
-import { FeeAmount, getPoolState, swapExactIn, TICK_SPACINGS } from 'reactor-sdk-ts';
-import Decimal from 'decimal.js';
-import { getTokenDecimals, tokensMap } from './tokens';
+import { Account, Provider, Wallet } from 'fuels';
+import { FeeAmount, getPoolState, swapExactIn } from 'reactor-sdk-ts';
+import { ETH_TOKEN, FUEL_TOKEN, getTokenDecimals, ST_FUEL_TOKEN, tokensMap, USDC_TOKEN } from './tokens';
 import { fetchMarketPrice } from './priceOracle';
 import { priceToSqrtPriceX96, sqrtPriceX96ToPrice } from './priceUtils';
 
 dotenv.config();
 
-const {
+export const {
     AMM_PRIVATE_KEY,
     AMM_PROVIDER_URL,
     REACTOR_CONTRACT_ADDRESS,
     AMM_POOLS_LIST_API,
+    USDC_MAX_SWAP,
+    ETH_MAX_SWAP,
+    FUEL_MAX_SWAP,
+    ST_FUEL_MAX_SWAP,
+    FUEL_ST_FUEL_PRICE,
+    POLL_PERIOD_MS,
 } = process.env;
 
 const provider = new Provider(AMM_PROVIDER_URL!!);
@@ -20,6 +25,7 @@ const wallet: Account = Wallet.fromPrivateKey(AMM_PRIVATE_KEY!!, provider);
 
 async function arbitrageToMarketPrice(token0Id: string, token1Id: string, feeAmount: FeeAmount) {
     let poolId: [string, string, FeeAmount] = [token0Id, token1Id, feeAmount];
+
     const poolState = await getPoolState(REACTOR_CONTRACT_ADDRESS!!, wallet, poolId);
     let sqrtPriceX96 = poolState!!.sqrtPriceX96;
 
@@ -30,7 +36,7 @@ async function arbitrageToMarketPrice(token0Id: string, token1Id: string, feeAmo
     console.log(`pool price: ${poolPrice.toString()}`);
     console.log(`market price: ${marketPrice.toString()}`);
     let priceDelta = poolPrice.minus(marketPrice).abs();
-    let priceDeltaPerc = priceDelta.div(poolPrice).mul(100).toNumber()
+    let priceDeltaPerc = priceDelta.div(poolPrice).mul(100).toNumber();
     console.log(`price delta %: ${priceDeltaPerc.toFixed(2)}`);
     let sqrtPriceLimit = priceToSqrtPriceX96(marketPrice.mul(10 ** decimalsDiff));
     let swapRes;
@@ -41,37 +47,46 @@ async function arbitrageToMarketPrice(token0Id: string, token1Id: string, feeAmo
     }
 
     if (poolPrice.gt(marketPrice)) {
-        // console.log(`moving price down from ${sqrtPriceX96} to ${sqrtPriceLimit}`);
-        let maxAmountInToken0 = '100000000000';
         swapRes = await swapExactIn(
             REACTOR_CONTRACT_ADDRESS!!,
             wallet,
             poolId,
             token0Id,
             token1Id,
-            maxAmountInToken0,
+            getSwapAmount(token0Id)!!,
             '0',
             sqrtPriceLimit,
         );
         return swapRes.isStatusSuccess ? 1 : -1;
     } else if (poolPrice.lt(marketPrice)) {
-        let maxAmountInToken1 = '1000000000';
         swapRes = await swapExactIn(
             REACTOR_CONTRACT_ADDRESS!!,
             wallet,
             poolId,
             token1Id,
             token0Id,
-            maxAmountInToken1,
+            getSwapAmount(token1Id)!!,
             '0',
             sqrtPriceLimit,
         );
-        // console.log(`swap ok? ${JSON.stringify(swapRes.isStatusSuccess)}`);
         return swapRes.isStatusSuccess ? 1 : -1;
     } else {
         return 0;
     }
+}
 
+function getSwapAmount(tokenId: string) {
+    if (tokenId == ETH_TOKEN) {
+        return ETH_MAX_SWAP;
+    } else if (tokenId == USDC_TOKEN) {
+        return USDC_MAX_SWAP;
+    } else if (tokenId == FUEL_TOKEN) {
+        return FUEL_MAX_SWAP;
+    } else if (tokenId == ST_FUEL_TOKEN) {
+        return ST_FUEL_MAX_SWAP;
+    } else {
+        throw Error(`unsupported tokenId=${tokenId}`);
+    }
 }
 
 type PoolDto = {
@@ -83,17 +98,21 @@ type PoolDto = {
 async function runBot() {
     console.log('Starting Reactor V1 AMM Bot...');
     const response = await fetch(AMM_POOLS_LIST_API!!);
-    const data:[PoolDto] = await response.json();
+    const data: [PoolDto] = await response.json(); // fetching all pools
+    const targetPools = data.filter(p => p.fee == FeeAmount.LOW); // filter required pools
+
     while (true) {
-        for (let i = 0; i < data.length; i++) {
-            const pool = data[i]
+        for (let i = 0; i < targetPools.length; i++) {
+            const pool = data[i];
+            console.log(`base ${pool.baseAssetId}`);
+            console.log(`quote ${pool.quoteAssetId}`);
             try {
                 let result = await arbitrageToMarketPrice(pool.baseAssetId, pool.quoteAssetId, pool.fee);
-                console.log(`result = ${result} for ${tokensMap[pool.baseAssetId].name},${tokensMap[pool.quoteAssetId].name},${pool.fee}`)
+                console.log(`result = ${result} for ${tokensMap.get(pool.baseAssetId)!!.name},${tokensMap.get(pool.quoteAssetId)!!.name},${pool.fee}`);
             } catch (err) {
-                console.error(`Error in rebalance: ${tokensMap[pool.baseAssetId].name},${tokensMap[pool.quoteAssetId].name},${pool.fee}`, err);
+                console.error(`error in rebalance: ${tokensMap.get(pool.baseAssetId)!!.name},${tokensMap.get(pool.quoteAssetId)!!.name},${pool.fee}`, err);
             }
-            await new Promise((r) => setTimeout(r, 10000));
+            await new Promise((r) => setTimeout(r, Number(POLL_PERIOD_MS!!)));
         }
     }
 }
